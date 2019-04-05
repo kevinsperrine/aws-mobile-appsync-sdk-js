@@ -20,7 +20,7 @@ import {
     ComplexObjectLink,
     AUTH_TYPE
 } from './link';
-import { createStore, StoreOptions, DEFAULT_KEY_PREFIX } from './store';
+import { createStore, DEFAULT_KEY_PREFIX, OfflineStatusChangeCallbackCreator } from './store';
 import { ApolloCache } from 'apollo-cache';
 import { AuthOptions } from './link/auth-link';
 import { Credentials, CredentialsOptions } from 'aws-sdk/lib/credentials';
@@ -73,14 +73,16 @@ export const createAppSyncLink = ({
     complexObjectsCredentials,
     resultsFetcherLink = createHttpLink({ uri: url }),
     conflictResolver,
+    getDelay
 }: {
-    url: string,
-    region: string,
-    auth: AuthOptions,
-    complexObjectsCredentials: CredentialsGetter,
-    resultsFetcherLink?: ApolloLink,
-    conflictResolver?: ConflictResolver,
-}) => {
+        url: string,
+        region: string,
+        auth: AuthOptions,
+        complexObjectsCredentials: CredentialsGetter,
+        resultsFetcherLink?: ApolloLink,
+        conflictResolver?: ConflictResolver,
+        getDelay?: (retries: number)=> number
+    }) => {
     const link = ApolloLink.from([
         createLinkWithStore((store) => new OfflineLink(store)),
         new ConflictResolutionLink(conflictResolver),
@@ -88,7 +90,7 @@ export const createAppSyncLink = ({
         createRetryLink(ApolloLink.from([
             createAuthLink({ url, region, auth }),
             createSubscriptionHandshakeLink(url, resultsFetcherLink)
-        ]))
+        ]), getDelay)
     ].filter(Boolean));
 
     return link;
@@ -133,8 +135,13 @@ export interface AWSAppSyncClientOptions {
     offlineConfig?: OfflineConfig,
 }
 
-export type OfflineConfig = Pick<Partial<StoreOptions<any>>, 'storage' | 'callback' | 'keyPrefix'> & {
-    storeCacheRootMutation?: boolean
+export interface OfflineConfig {
+    storage?: any,
+    callback?: OfflineCallback,
+    keyPrefix?: string,
+    storeCacheRootMutation?: boolean,
+    detectNetwork?: OfflineStatusChangeCallbackCreator,
+    getDelay?: (retries:number)=>number
 };
 
 // TODO: type defs
@@ -174,9 +181,11 @@ class AWSAppSyncClient<TCacheShape extends NormalizedCacheObject> extends Apollo
         disableOffline = false,
         offlineConfig: {
             storage = undefined,
-            keyPrefix = undefined,
+            keyPrefix = DEFAULT_KEY_PREFIX,
             callback = () => { },
             storeCacheRootMutation = false,
+            detectNetwork = undefined,
+            getDelay=undefined
         } = {},
     }: AWSAppSyncClientOptions, options?: Partial<ApolloClientOptions<TCacheShape>>) {
         const { cache: customCache = undefined, link: customLink = undefined } = options || {};
@@ -201,8 +210,10 @@ class AWSAppSyncClient<TCacheShape extends NormalizedCacheObject> extends Apollo
             dataIdFromObject,
             storage,
             keyPrefix,
-            callback
-        });
+            callback,
+            detectNetwork,
+            getDelay
+        );
         const cache: ApolloCache<any> = disableOffline
             ? (customCache || new InMemoryCache(cacheOptions))
             : new OfflineCache({ store, storeCacheRootMutation }, cacheOptions);
@@ -222,7 +233,7 @@ class AWSAppSyncClient<TCacheShape extends NormalizedCacheObject> extends Apollo
                 };
             });
         });
-        const link = waitForRehydrationLink.concat(customLink || createAppSyncLink({ url, region, auth, complexObjectsCredentials, conflictResolver }));
+        const link = waitForRehydrationLink.concat(customLink || createAppSyncLink({ url, region, auth, complexObjectsCredentials, conflictResolver, getDelay }));
 
         const newOptions = {
             ...options,
