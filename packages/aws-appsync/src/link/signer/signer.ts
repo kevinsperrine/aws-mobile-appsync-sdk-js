@@ -8,7 +8,8 @@ See the License for the specific language governing permissions and limitations 
 global.Buffer = global.Buffer || require('buffer').Buffer; // Required for aws sigv4 signing
 
 var url = require('url'),
-    crypto = require('aws-sdk/global').util.crypto;
+    crypto = require('aws-sdk/global').util.crypto,
+    config = require('aws-sdk/global').config;
 
 var encrypt = function (key, src, encoding = '') {
     return crypto.lib.createHmac('sha256', key).update(src, 'utf8').digest(encoding);
@@ -216,7 +217,7 @@ var sign = function (request, access_info, service_info = null) {
     request.headers = request.headers || {};
 
     // datetime string and date string
-    var dt = new Date(),
+    var dt = new Date(Date.now() + config.systemClockOffset),
         dt_str = dt.toISOString().replace(/[:-]|\.\d{3}/g, ''),
         d_str = dt_str.substr(0, 8),
         algorithm = 'AWS4-HMAC-SHA256';
